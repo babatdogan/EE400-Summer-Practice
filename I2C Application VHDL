@@ -1,0 +1,445 @@
+
+library IEEE;
+
+use IEEE.std_logic_1164.all;
+
+entity I2C is
+
+generic (
+    
+    scl_clock_divider : integer := 30 -- 24MHz clock'a gore clock divider. 30 -> 400kbps icin ayarlandi. 5mbps modu icin minimum 5 olabilir.
+);
+
+port (
+    -- clock sinyalleri
+    i_clk_24MHz  : IN std_logic;
+     
+    -- kullanici sinyalleri
+    i_reset      : IN std_logic;                        -- reset active low, 1 olursa reset oluyor
+    i_enable     : IN std_logic;                        -- enable inputu, 1 olursa cihaz basliyor
+    i_addr       : IN std_logic_vector (6 downto 0);    -- 7 bit adres inputu
+    i_rw         : IN std_logic;                        -- read/write seciyor, 0 -> write , 1 -> read 
+    i_data_write : IN std_logic_vector (7 downto 0);    -- yazilacak data inputu
+    o_data_read  : OUT std_logic_vector (7 downto 0);   -- okunan data outputu
+    o_busy       : OUT std_logic;                       -- cihaz calisirken busy sinyali veriyor 
+    o_ack_error  : OUT std_logic;                       -- ACK hatasi olup olmadigni bildiriyor. '1' -> ack hatasi var 
+                   
+    -- TEST SINYALLERI
+    o_TEST1      : OUT std_logic_vector (7 downto 0);
+    o_TEST2      : OUT std_logic_vector (7 downto 0);
+    o_TEST3      : OUT std_logic;
+
+    -- I2C sinyalleri
+	io_SDA       : INOUT  std_logic;                    -- I2C icin data input/output 
+    o_SCL        : OUT std_logic                        -- I2C icin clock inputu
+);
+end I2C;
+architecture architecture_I2C of I2C is
+
+    type DURUMLAR is (S_BASLANGIC, S_HAZIR, S_BASLA, S_ADRES_GONDER, S_SLAVE_ACK, S_WRITE, S_READ, S_SLAVE_ACK2, S_MASTER_ACK, S_DUR, S_ACK_ERROR);
+    signal md : DURUMLAR := S_BASLANGIC;
+    
+    -- SCL_URETICI process'inde kullanilan sinyaller
+    signal clk_sayaci   : integer := 0;     -- scl icin clock sayaci
+    signal b_SCL        : std_logic := '0'; -- icerdeki scl 
+    signal data_clock : std_logic := '0';   -- data clock (scl'den yarim clock geriden geliyo)
+    signal p_data_clock : std_logic := '0'; -- yukselen ve dusen hesaplamak icin onceki data clock degeri
+    signal p_SCL        : std_logic := '0'; -- yukselen ve dusen hesaplamak icin onceki scl degeri
+    signal SCL_gonder   : std_logic := '0'; -- '1' ise SCL gonderiyor
+    
+
+    -- MAIN_PROCESS process'inde kullanilan sinyaller
+    signal data_yazmaci : std_logic_vector (7 downto 0) := "00000000";  -- data yazma bufferi
+    signal b_data_read : std_logic_vector (7 downto 0) := "00000000";   -- okunan data bufferi
+    signal scl_yukselen : std_logic := '0';                             
+    signal scl_dusen    : std_logic := '0';                             
+    signal data_yukselen: std_logic := '0'; 
+    signal data_dusen   : std_logic := '0';
+    signal bit_sayaci   : integer range 0 to 10 := 0;                   -- yazma ve adres gonderme islemleri icin bit sayaci
+
+    signal bit_sayaci1   : integer range 0 to 10 := 8;                  -- okuma islemi icin bit sayaci. bu sayacin 8'den 0'a dogru gitmesinin
+                                                                        -- sebebi output verirken bit kaydirma isleminde bi hata yasamam. 
+
+
+    signal p_adres      : std_logic_vector (6 downto 0) := "0000000";   -- adres degisti mi diye kontrol etmek amacli onceki adres sinyali
+    signal b_busy       : std_logic := '0';                             -- busy outputunun bufferi
+
+    signal SDA_enable_n : std_logic := '1';                             -- SDA'yi output olarak secmeye yariyor. eger '1' olursa io_SDA'yi 
+                                                                        -- 'Z' olarak ayarliyor ve bu sekilde io_SDA'dan input alabiliyoruz.
+
+
+    signal b_SDA        : std_logic := '1';                             -- io_SDA icin buffer                       
+    signal nack_done    : std_logic := '0';                             -- NON-ACK yollamak icin sinyal
+    signal nack_done2   : std_logic := '0';                             -- NON-ACK yollamak icin sinyal   
+    signal tekrar_start : std_logic := '0';                             -- ardisik islemlerde tekrar start gondermek icin sinyal
+    signal rw_dur       : std_logic := '0';                             -- read/write hangisinin duracagini belirtiyor. S_DUR durumunda kullaniliyor.
+    
+
+
+begin
+
+    -- bu process'de 2 adet clock uretiyoruz. bunlardan birisi data birisi scl. scl output olarak slave'e veriyoruz. data clock'u ise 
+    -- icerideki zamanlamalari ayarlamak icin kullaniliyor. data clock, scl'i yarim clock geriden takip edecek sekilde tasarlandi.
+    -- iki clock'un da frekanslari ayni.
+
+    SCL_URETICI: process (i_clk_24MHz, i_reset) begin       
+
+        if i_reset = '1' then
+
+            clk_sayaci <= 0;
+
+        elsif (rising_edge(i_clk_24MHz)) then
+
+            clk_sayaci <= clk_sayaci + 1;
+            p_SCL <= b_SCL;
+            p_data_clock <= data_clock;
+
+            if clk_sayaci = (scl_clock_divider / 4) then
+                b_SCL <= '0';
+                data_clock <= '1';
+            end if;
+            
+            if clk_sayaci = (scl_clock_divider / 2) then
+                b_SCL <= '1';
+                data_clock <= '1';
+            end if;
+
+            if clk_sayaci = 3 * (scl_clock_divider / 4) then
+                b_SCL <= '1';
+                data_clock <= '0';
+            end if;
+
+            if clk_sayaci = scl_clock_divider then
+                clk_sayaci <= 0;
+                b_SCL <= '0';
+                data_clock <= '0';
+            end if;
+
+        end if;
+
+    end process SCL_URETICI;
+
+    
+    I2C_MAIN_PROCESS : process (i_clk_24MHz, i_reset, b_SCL, scl_yukselen, data_yukselen) begin
+
+        if i_reset = '1' then                                   -- asenkron reset sinyali
+            
+            o_ack_error <= '0';
+            b_busy <= '1';
+            SCL_gonder <= '0';
+            data_yazmaci <= (others => '0');
+            b_data_read <= (others => '0');
+            b_SDA <= '1'; -- hazir durumda SDA '1' olmali
+            o_data_read <= (others => '0');
+            nack_done     <= '0';
+            nack_done2    <= '0';
+            tekrar_start  <= '0';
+            rw_dur        <= '0';
+            bit_sayaci <= 0;
+            bit_sayaci1 <= 8;
+
+            md <= S_BASLANGIC;
+
+        elsif (rising_edge (i_clk_24MHz)) then
+
+            case md is
+
+                when S_BASLANGIC =>                                         -- baslangicta sinyalleri default degerlerine tanimliyoruz
+
+                    nack_done     <= '0';
+                    nack_done2    <= '0';
+                    tekrar_start  <= '0';
+                    rw_dur        <= '0';
+                    o_ack_error <= '0';
+                    data_yazmaci <= (others => '0');
+                    b_data_read <= (others => '0');
+                    b_busy <= '0';
+                    SCL_gonder <= '0';
+                    b_SDA <= '1'; -- hazir durumda SDA '1' olmali
+                    bit_sayaci <= 0;
+                    bit_sayaci1 <= 8;
+                    o_data_read <= (others => '0');
+                    md <= S_HAZIR;                                          -- herhangi bir kosul olmadan hazir durumuna geciyor
+
+
+                when S_HAZIR =>                                             
+            
+                    nack_done     <= '0';
+                    nack_done2    <= '0';
+                    tekrar_start  <= '0';
+                    rw_dur        <= '0';
+                    o_ack_error <= '0';
+                    b_busy <= '0';
+                    SCL_gonder <= '0';
+                    data_yazmaci <= (others => '0');
+                    b_data_read <= (others => '0');
+                    b_SDA <= '1'; -- hazir durumda SDA '1' olmali
+                    bit_sayaci <= 0;
+                    bit_sayaci1 <= 8;
+
+                    if i_enable = '1' then                          -- i_enable '1' olursa isleme basliyor
+                        b_busy <= '1';
+                        md <= S_BASLA;
+                    end if;
+
+
+                when S_BASLA =>
+
+                    if (scl_yukselen = '1') then 
+    
+                        p_adres <= i_addr;                          -- adres degisikligi olacak mi diye onceki adresi kaydediyoruz 
+                        data_yazmaci <= i_addr & i_rw;              -- data yazmacini hazirliyoruz
+                        b_busy <= '1';
+                        b_SDA <= '0';                               -- start komutu icin SDA SCL'den önce 0'a gecmeli
+                        md <= S_ADRES_GONDER;
+
+                    end if;
+
+
+                when S_ADRES_GONDER =>
+
+                    tekrar_start <= '0';                            
+                    b_busy <= '1';
+                    SCL_gonder <= '1';                              -- SCL gondermeye basliyoruz. SDA'dan sonra SCL 1'den 0'a dusuyor
+
+                    if (data_yukselen = '1') then                   -- data_yukselen ile samplelamamizin sebebi SCL'in yukselen kenarina
+                                                                    -- verinin tam ortasini denk getirmek istiyoruz. Testbench'den gorunebilir.
+
+                        if bit_sayaci < 7 then                      
+                            b_SDA <= data_yazmaci(7);               -- 7-bit olan adres'i io_SDA'dan yolluyoruz
+                            data_yazmaci(7 downto 0) <= data_yazmaci(6 downto 0) & '0';     -- adresi (msb'den lsb'ye) yolluyoruz
+                            bit_sayaci <= bit_sayaci + 1;
+                        end if;
+
+                        if bit_sayaci = 7 then
+                            b_SDA <= data_yazmaci(7); -- adresi yolladiktan sonra read/write komutu yolluyoruz
+                            bit_sayaci <= 0;
+                            bit_sayaci <= bit_sayaci + 1;
+                        end if; 
+
+                        if bit_sayaci = 8 then
+                            b_SDA <= '1';      -- slave'den ack komutu gelmesi gerekiyor bu yuzden data gelmesi icin b_SDA'yi '1' e cekiyoruz.
+                            bit_sayaci <= 0;
+                            md <= S_SLAVE_ACK;
+                        end if;
+
+                    end if;
+                
+
+                when S_SLAVE_ACK =>
+
+                        if (io_SDA /= '0') then     -- slave io_SDA'dan ACK ('0') yolladi mi diye kontrol ediyoruz 
+                            scl_gonder <= '0';      -- ACK ERROR durumunda scl gondermeyi birakiyoruz
+                            md <= S_ACK_ERROR;
+                        else
+
+                            if i_rw = '0' then      
+                                bit_sayaci <= 0;
+                                data_yazmaci <= i_data_write; -- write komutu geldiyse yazilacak datayi buffer'a yukluyoruz
+                                md <= S_WRITE;
+                            else
+                                bit_sayaci1 <= 8;
+                                data_yazmaci <= (others => '0');
+                                b_data_read <= (others => '0');
+                                b_SDA <= '1';                 -- read isleminde data gelmesi icin b_SDA'yi '1' e cekiyoruz
+                                md <= S_READ;
+                            end if;
+                        end if;
+
+
+
+                when S_WRITE =>    -- adres yollamakla ayni sekilde calisiyor.
+
+                    b_busy <= '1';
+                    if (data_yukselen = '1') then               
+
+                        if bit_sayaci /= 8 then
+                            b_SDA <= data_yazmaci(7);       -- yazilacak datayi (msb'den lsb'ye) yolluyoruz
+                            data_yazmaci(7 downto 0) <= data_yazmaci(6 downto 0) & '0'; 
+                            bit_sayaci <= bit_sayaci + 1;
+                        else
+
+                            -- burada slave ack yollamasi icin io_SDA'yi 'Z'e cekiyoruz.
+                            b_SDA <= '1'; -- data gelmesi icin b_SDA'yi '1' e cekiyoruz
+                            bit_sayaci <= 0;
+                            md <= S_SLAVE_ACK2;
+                        end if; 
+                    end if;
+
+
+                when S_SLAVE_ACK2 =>
+                     
+                    if (scl_yukselen = '1') AND (io_SDA /= '0') AND (tekrar_start = '0') then -- slave ack yollamadiysa error veriyor
+                        scl_gonder <= '0';
+                        md <= S_ACK_ERROR;
+                    end if;
+
+                    if (scl_yukselen = '1') AND (io_SDA = '0') then -- baska islem yapilabilmesi icin busy sinyali 0'a cekiliyor
+                        b_busy <= '0';
+                    end if;
+                   
+                    if (data_yukselen = '1') then
+
+                            if (i_enable = '1') AND (p_adres = i_addr) AND (i_rw = '0') then -- butun islemler ve adres ayni ise direkt yazma
+                                data_yazmaci (7 downto 0) <= i_data_write(6 downto 0) & '0'; -- islemine devam ediyoruz. bu yuzden data_yazmaci'ni
+                                b_SDA <= i_data_write(7);                                    -- msb'den lsb'ye yollamaya basliyoruz
+                                bit_sayaci <= bit_sayaci + 1;
+                                md <= S_WRITE;
+                            end if;
+                
+                            if  (i_enable = '1') AND (i_rw = '0') AND (p_adres /= i_addr) then -- farkli adrese yine yazma islemi yapilacaksa
+                                data_yazmaci <= i_addr & i_rw;                                 -- tekrar start komutu gondermemiz gerekiyor slave'e.
+                                tekrar_start <= '1';                                           -- bunun icin yazilmis bir sequence icin tekrar_start 
+                                                                                               -- sinyali kullaniliyor.
+
+                                b_SDA <= '1'; -- tekrar start gondermek icin SDA'yi 1'e cekiyoruz        
+                            end if;
+
+                            if (i_enable = '1') AND (i_rw = '1') then     -- eger yazma isleminden sonra okuma islemi yapilacaksa en basa donuyoruz
+                                b_busy <= '1';
+                                md <= S_BASLA;
+                            end if;
+
+                            if (i_enable = '0') then      -- i_enable '0' olursa butun islemi durdurup bir 'stop' komutu yollamaya gidiyoruz.
+                                b_SDA <= '1';        -- N-ACK yollamak icin b_SDA'yi 1'e cekiyoruz. 
+                                rw_dur <= '0';    -- durma durumuna write'dan gectigimizi belirtiyoruz
+                                md <= S_DUR;
+                            end if;
+
+                    end if;
+                    
+                    if (data_dusen = '1') AND ( tekrar_start = '1') then
+                        b_SDA <= '0';       -- Tekrar start sequence gondermek icin SDA'yi SCL'den once 0'a cekiyoruz
+                        tekrar_start <= '0';    
+                        md <= S_ADRES_GONDER;   -- adres gondermeye donuyoruz
+                    end if;
+
+
+                when S_READ => 
+
+                    b_busy <= '1'; 
+                    b_SDA <= '1';   -- data gelmesi icin b_SDA'yi 1'e cekiyoruz surekli
+
+                    if (data_yukselen = '1') then
+
+                        if bit_sayaci1 /= 0 then 
+                            b_data_read(bit_sayaci1 - 1) <= io_SDA; -- msb'den lsb'ye data aliyoruz
+                            bit_sayaci1 <= bit_sayaci1 - 1;
+                        else
+
+                            o_data_read <= b_data_read;     -- datayi read isleminin sonunda output olarak gosteriyoruz
+                            if (i_enable = '1') AND (i_rw = '1') then
+                                b_SDA <= '0'; -- data transferi devam edecegi icin burada master ack yolluyor
+                            else   
+                                b_SDA <= '1'; -- data transferi durdugu icin burada master non-ack yolluyor
+                            end if;
+
+                            bit_sayaci1 <= 8;
+                            md <= S_MASTER_ACK;
+
+                        end if;
+
+                    end if;
+
+
+                when S_MASTER_ACK =>
+
+                    if (scl_yukselen = '1') then    -- busy sinyalini 0'a cekiyoruz yeni komut alabilrmek icin
+                        b_busy <= '0';
+                    end if;
+
+                    if (scl_dusen = '1') AND (tekrar_start = '0') then
+                        b_SDA <= '1';               -- read islemi devam edebilir diye data gelmesi icin tekrar SDA'yi 1'e cekiyoruz
+                    end if;
+
+                    if (data_yukselen = '1') then
+
+                            if (i_enable = '1') AND (p_adres = i_addr) AND (i_rw = '1') then -- butun inputlar ayni ise okuma islemine tekrar basliyoruz
+                                b_data_read(bit_sayaci1 - 1) <= io_SDA; -- burada datayi okumaya basliyoruz 
+                                bit_sayaci1 <= bit_sayaci1 - 1;
+                                md <= S_READ;
+                            end if;
+                
+                            if  (i_enable = '1') AND (i_rw = '1') AND (p_adres /= i_addr) then -- farkli adres geldiginde tekrar start sequence 
+                                data_yazmaci <= i_addr & i_rw;                                -- yollamak icin tekrar_start sinyalini kullaniyoruz
+                                b_SDA <= '1';               -- SDA'yi SCL'den once 0'a cekmek icin once SDA'yi 1'e cekiyoruz
+                                tekrar_start <= '1';
+                            end if;
+
+                            if (i_enable = '1') AND (i_rw = '0') then   -- read yerine write islemi olacaksa basa donuyoruz
+                                b_busy <= '1';
+                                md <= S_BASLA;
+                            end if;
+    
+                            if (i_enable = '0') then        -- i_enable '0' oldugunda islemi durdurmak icin S_DUR'a geciyoruz
+                                b_SDA <= '0';
+                                rw_dur <= '1';              -- durma isleminin read'den sonra gelecegini belirtiyoruz
+                                md <= S_DUR;
+                            end if;
+
+                    end if;
+
+                    if (data_dusen = '1') AND ( tekrar_start = '1') then
+                        b_SDA <= '0';           -- Tekrar start gondermek icin SDA'yi 0'a cekiyoruz
+                        tekrar_start <= '0';
+                        md <= S_ADRES_GONDER;   -- adres gondermeye donuyoruz
+                    end if;
+
+
+                when S_DUR =>   -- durma sequence'i icin SCL, SDA'dan once 0'dan 1'e cekmesi gerekiyor
+                    
+                    if rw_dur = '0' then        -- durma islemi write'dan sonra geldiyse burasi calisiyor
+                        if data_dusen = '1' then
+                            b_SDA <= '0'; -- stop condition gonderiyoruz
+                            nack_done <= '1';
+                        end if;
+    
+                        if (scl_yukselen = '1') AND (nack_done = '1') then 
+                            nack_done <= '0';
+                            nack_done2 <= '1';
+                            scl_gonder <= '0';
+                        end if;
+                        
+                        if (data_dusen = '1') AND (nack_done2 = '1') then
+                            nack_done2 <= '0';
+                            b_busy <= '0';
+                            md <= S_HAZIR;
+                        end if;
+                    else                    -- durma islemi read'den sonra geldiyse burasi calisiyor
+                        if (scl_yukselen = '1') then
+                            scl_gonder <= '0';
+                        end if;
+                        if (data_dusen = '1') then
+                            b_SDA <= '1';
+                            md <= S_HAZIR;
+                        end if;
+                    end if;
+
+
+                when S_ACK_ERROR =>
+                    
+                    scl_gonder <= '0';
+                    o_ack_error <= '1';
+                    md <= S_HAZIR;
+    
+
+            end case;
+        end if;
+
+    end process I2C_MAIN_PROCESS;
+
+
+    scl_yukselen <= (NOT p_SCL) AND b_SCL; 
+    scl_dusen <= p_SCL AND (NOT b_SCL);
+    data_yukselen <= (NOT p_data_clock) AND data_clock;
+    data_dusen <= (p_data_clock) AND (NOT data_clock);
+
+
+    o_busy <= b_busy;
+    o_SCL <= b_SCL OR (NOT SCL_gonder) ; -- scl_gonder = 1 => o_SCL <= b_SCL   ;   scl_gonder = 0 => o_SCL <= '1'
+
+    o_TEST3 <= data_clock;
+
+    io_SDA <= '0' WHEN b_SDA = '0' ELSE 'Z'; -- data gelmesi icin io_SDA'yi high-Z'e cekiyoruz. 
+
+end architecture_I2C;
