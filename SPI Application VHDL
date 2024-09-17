@@ -1,0 +1,404 @@
+
+library IEEE;
+
+use IEEE.std_logic_1164.all;
+
+entity spi_ADC2 is
+port (
+
+    i_clk          : in  std_logic;                    -- saat i?areti
+    i_reset        : in  std_logic;
+
+    i_start        : in  std_logic;                    -- '1' -> okumaya basla '0' -> okumayi durdur
+    i_config       : in  std_logic;                    -- '1' -> sequencer icin config gonder
+    
+    o_busy           : out std_logic;                    -- mesgul
+    
+    o_r_data0 : out std_logic_vector(13 downto 0);
+    o_r_data1 : out std_logic_vector(13 downto 0);
+    o_r_data2 : out std_logic_vector(13 downto 0);
+    o_r_data3 : out std_logic_vector(13 downto 0);
+    o_r_data4 : out std_logic_vector(13 downto 0);
+    o_r_data5 : out std_logic_vector(13 downto 0);
+    o_r_data6 : out std_logic_vector(13 downto 0);
+    o_r_data7 : out std_logic_vector(13 downto 0);
+
+    -- SPI portlari
+    o_cnv     : out std_logic;                    
+    o_sck     : out std_logic;                         -- 100kHz
+    o_mosi    : out std_logic;
+    i_miso    : in  std_logic
+
+);
+end spi_ADC2;
+
+architecture architecture_spi_ADC2 of spi_ADC2 is
+    type DURUMLAR is (S_BASLANGIC, S_CFG_HAZIR, S_CFG_GONDER, S_CFG_GONDER1, S_BEKLE, S_VERI_AL, S_VERI_AL_1, S_VERI_AL_2, S_READ_DELAY);
+    signal md : DURUMLAR := S_BASLANGIC;
+
+    signal sck : std_logic := '0';
+    signal b_cnv    : std_logic := '1';
+    signal b_mosi    : std_logic := '0';
+    signal b_miso   : std_logic := '0';
+    signal b_busy : std_logic := '0';
+    signal sck_sayaci: std_logic := '0';
+    signal sck_gonder: std_logic := '0'; -- SPI sck = o_sck kontrol
+    signal p_sck : std_logic := '0';
+    signal sck_yukselen : std_logic := '0';
+    signal sck_dusen : std_logic := '0';
+
+    signal alma_yazmaci: std_logic_vector(13 downto 0);
+    signal gonderme_sayaci : integer range 0 to 15 := 0;
+    signal bit_sayaci : integer range 0 to 15 := 0;
+    signal gonderme_yazmaci: std_logic_vector(13 downto 0);
+
+    signal b_r_data0 :  std_logic_vector(13 downto 0);
+    signal b_r_data1 :  std_logic_vector(13 downto 0);
+    signal b_r_data2 :  std_logic_vector(13 downto 0);
+    signal b_r_data3 :  std_logic_vector(13 downto 0);
+    signal b_r_data4 :  std_logic_vector(13 downto 0);
+    signal b_r_data5 :  std_logic_vector(13 downto 0);
+    signal b_r_data6 :  std_logic_vector(13 downto 0);
+    signal b_r_data7 :  std_logic_vector(13 downto 0);
+    signal input_sayaci : integer range 0 to 7 := 0;
+    
+
+    
+    signal saymaya_basla     : std_logic := '0';
+    signal baslangic_sayaci  : integer range 0 to 68:= 0;
+    signal read_delay_sayaci : integer range 0 to 60 := 0;
+    signal read_delay_secici : std_logic := '0';
+begin
+
+   sck_uret : process (i_clk, i_reset) --clk
+    begin
+
+        if (i_reset = '1') then
+            sck <= '0';
+            sck_sayaci <= '1';
+        elsif (i_clk'event AND i_clk = '1') then -- rising edge
+            sck_sayaci <= NOT sck_sayaci;
+            if (sck_sayaci = '1') then
+                sck <= NOT sck;  -- o_sck = clk / 4
+            end if;        
+        end if;        
+    end process ;
+    
+    
+    fsm : process (i_clk, i_reset, i_miso, b_mosi, i_start, i_config)
+    begin
+        if (i_reset = '1') then
+            
+            b_busy <= '1';
+            sck_gonder <= '0';
+
+            gonderme_yazmaci <= (others => '0');
+            alma_yazmaci     <= (others => '0');
+
+            b_r_data0 <= (others => '0');
+            b_r_data1 <= (others => '0');
+            b_r_data2 <= (others => '0');
+            b_r_data3 <= (others => '0');
+            b_r_data4 <= (others => '0');
+            b_r_data5 <= (others => '0');
+            b_r_data6 <= (others => '0');
+            b_r_data7 <= (others => '0');
+            input_sayaci <= 0;
+            
+            gonderme_sayaci <= 0;
+            bit_sayaci <= 0;
+            saymaya_basla <= '0';
+            read_delay_sayaci <= 0;
+            read_delay_secici <= '0';
+
+            b_cnv <= '1';
+            b_mosi <= '0';
+            b_busy <= '0';
+
+            md <= S_BASLANGIC;
+    
+        elsif (i_clk'event and i_clk = '1') then
+            b_miso <= i_miso;
+            p_sck <= sck;      
+            case md is
+                when S_BASLANGIC =>
+                    
+                    b_busy <= '0';
+                    gonderme_sayaci <= 0;
+                    bit_sayaci <= 0;
+                    saymaya_basla <= '0';
+
+                    b_cnv <= '1';
+                    b_mosi <= '0';
+                    b_busy <= '0';
+
+                    b_r_data0 <= (others => '0');
+                    b_r_data1 <= (others => '0');
+                    b_r_data2 <= (others => '0');
+                    b_r_data3 <= (others => '0');
+                    b_r_data4 <= (others => '0');
+                    b_r_data5 <= (others => '0');
+                    b_r_data6 <= (others => '0');
+                    b_r_data7 <= (others => '0');
+                    input_sayaci <= 0;
+
+                    gonderme_yazmaci <= (others => '0');
+                    alma_yazmaci    <= (others => '0');
+                    read_delay_sayaci <= 0;
+                    read_delay_secici <= '0';
+                    sck_gonder <= '0';
+                    
+                    if (i_config = '1') then
+                        md <= S_CFG_HAZIR;
+                    else 
+                        md <= S_BASLANGIC;
+                    end if;
+
+                when S_CFG_HAZIR =>
+                    
+                    b_busy <= '1';
+
+                    -- sequencer config ayari msb -> lsb bitlerin tanimi su sekilde:
+                    -- 1 (overwrite), 111 (unipolar),  000 (IN0 channel select), 1 (full bandwidth)
+                    -- 000 (reference ve tempature sensor), 11 (enable sequencer), 0 (read back config)
+
+                     gonderme_yazmaci <= "11110001000111";
+                                                        
+                     saymaya_basla <= '1';
+
+                     if baslangic_sayaci <2 then
+                        b_cnv <= '0';
+                     end if;
+
+                     if baslangic_sayaci = 2 then
+                        b_cnv <= '1';
+                     end if;
+
+                     if baslangic_sayaci = 45 then 
+                         b_cnv <= '1';
+                         --sck_gonder <= '1';
+                         md <= S_CFG_GONDER;
+                     end if;
+                     
+                    -- md <= S_CFG_HAZIR;
+                    
+                when S_CFG_GONDER =>
+                     
+                     b_busy <= '1';
+
+                     if ( sck_yukselen = '1' ) then
+                      --  
+
+                        if(gonderme_sayaci /= 14) then
+                            b_mosi <= gonderme_yazmaci(13);
+                            gonderme_yazmaci(13 downto 0) <= gonderme_yazmaci(12 downto 0) & '0';   
+                            gonderme_sayaci <= gonderme_sayaci + 1;
+                
+                            md <= S_CFG_GONDER1;    
+                        else
+                            b_mosi <= '0';
+                            read_delay_secici <= '0';
+                            md <= S_READ_DELAY;
+                        end if;
+                        
+                    else
+                        md <= S_CFG_GONDER;     
+                    end if;
+                    
+
+                when S_CFG_GONDER1 =>
+
+                    b_busy <= '1';
+
+                    sck_gonder <= '1';
+                    md <= S_CFG_GONDER; 
+
+                when S_BEKLE =>
+                    
+                    b_busy <= '0';
+
+                    gonderme_sayaci <= 0;
+                    bit_sayaci <= 0;
+                  
+                    b_cnv <= '1';
+                    b_mosi <= '0';
+                    b_busy <= '0';
+
+                    b_r_data0 <= (others => '0');
+                    b_r_data1 <= (others => '0');
+                    b_r_data2 <= (others => '0');
+                    b_r_data3 <= (others => '0');
+                    b_r_data4 <= (others => '0');
+                    b_r_data5 <= (others => '0');
+                    b_r_data6 <= (others => '0');
+                    b_r_data7 <= (others => '0');
+
+                    gonderme_yazmaci <= (others => '0');
+                    alma_yazmaci    <= (others => '0');
+                
+                    sck_gonder <= '0';
+                    
+                    if (i_start = '1') then
+                        b_cnv <= '0';
+                        --sck_gonder <= '1';
+                        md <= S_VERI_AL;
+                    else 
+                        md <= S_BEKLE;
+                    end if;
+
+               when S_VERI_AL =>
+                    
+                    b_busy <= '1';
+
+                    if (bit_sayaci < 13) then 
+                        sck_gonder <= '1'; 
+                    end if;
+
+                    if (sck_yukselen = '1') then  -- o_sck y?kselen --
+                         --  --  --  --  --   
+                        if (bit_sayaci = 14) then 
+                          --  sck_gonder <= '0'; -- sck gondermeyi durdur
+                           -- b_cnv <= '1';
+                            
+                            case input_sayaci is 
+                                when 0 =>
+                                    b_r_data0 <= alma_yazmaci;
+                                when 1 =>
+                                    b_r_data1 <= alma_yazmaci;
+                                when 2 =>
+                                    b_r_data2 <= alma_yazmaci;
+                                when 3 =>
+                                    b_r_data3 <= alma_yazmaci;
+                                when 4 =>
+                                    b_r_data4 <= alma_yazmaci;
+                                when 5 =>
+                                    b_r_data5 <= alma_yazmaci;
+                                when 6 =>
+                                    b_r_data6 <= alma_yazmaci;
+                                when 7=>
+                                    b_r_data7 <= alma_yazmaci;
+                                when others =>
+                                    input_sayaci <= 0;
+                                    b_r_data0 <= alma_yazmaci;
+                            end case;
+                            bit_sayaci <= 0;
+                            md <= S_VERI_AL_2;
+                        else
+                            bit_sayaci <= bit_sayaci + 1;
+                            md <= S_VERI_AL_1; --S_VERI_GONDER
+                        end if;
+
+                        alma_yazmaci(13 downto 0) <= alma_yazmaci(12 downto 0) & b_miso;
+                    else
+                        md <= S_VERI_AL;     
+                    end if;
+
+
+                when S_VERI_AL_1 =>
+                    
+                    b_busy <= '1';
+
+                    if bit_sayaci = 14 then
+                        sck_gonder <= '0';
+                    end if;
+                    md <= S_VERI_AL;     
+
+
+                when S_VERI_AL_2 =>
+
+                    b_busy <= '1';
+                
+                    b_cnv <= '1';
+                    sck_gonder <= '0';
+                    if (i_clk'event AND i_clk= '1') then 
+
+                        if(i_start = '1') then
+                        
+                            b_busy <= '1';
+
+                            if input_sayaci = 7 then
+                                input_sayaci <= 0;
+                            else
+                                input_sayaci <= input_sayaci +1;
+                            end if;
+                            read_delay_secici <= '1';
+                            md <= S_READ_DELAY;   
+                        else
+                            
+                            b_busy <= '0';
+
+                            md <= S_BEKLE;
+                        end if;
+                    end if;
+                
+                when S_READ_DELAY => 
+            
+                    
+                      
+                    sck_gonder <= '0';
+                    b_cnv <= '1';
+                    read_delay_sayaci <= read_delay_sayaci + 1;
+                
+                    if read_delay_sayaci = 40 then 
+                        read_delay_sayaci <= 0;
+            
+                        if read_delay_secici = '0' then
+                            md <= S_BEKLE;
+                        else
+                            b_cnv <= '0';
+                            md <= S_VERI_AL;
+                        end if;
+                    
+                    else 
+                        md <= S_READ_DELAY;
+                    end if;
+                            
+                when others =>
+                    md <= S_BEKLE;
+            end case;
+        end if;
+    end process ;
+
+
+
+    baslangic_saymaci : process (i_clk, i_reset,saymaya_basla) --clk
+    begin
+
+        if (i_reset = '1') then
+            baslangic_sayaci <= 0;
+
+        elsif (i_clk'event and i_clk = '1') then
+
+            if (saymaya_basla = '1') then
+                baslangic_sayaci <= baslangic_sayaci + 1;
+    
+                if (baslangic_sayaci = 67) then
+                    baslangic_sayaci <= 0;     
+                end if;
+                
+            else 
+                baslangic_sayaci <= 0;
+            end if;
+    
+        end if;
+    
+    end process ;
+    
+    sck_yukselen <= (NOT p_sck) AND sck ; -- AND sck_gonder;
+    sck_dusen    <= p_sck AND (NOT sck) ; -- AND sck_gonder;
+
+    o_sck    <= sck AND sck_gonder; 
+    o_mosi   <= b_mosi;
+    o_cnv   <= b_cnv;
+    o_busy <= b_busy;
+
+    o_r_data0 <= b_r_data0;
+    o_r_data1 <= b_r_data1;
+    o_r_data2 <= b_r_data2;
+    o_r_data3 <= b_r_data3;
+    o_r_data4 <= b_r_data4;
+    o_r_data5 <= b_r_data5;
+    o_r_data6 <= b_r_data6;
+    o_r_data7 <= b_r_data7;
+
+end architecture_spi_ADC2;
