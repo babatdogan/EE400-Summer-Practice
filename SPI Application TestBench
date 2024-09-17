@@ -1,0 +1,429 @@
+
+library ieee;
+use ieee.std_logic_1164.all;
+
+entity tb is
+end tb;
+
+architecture behavioral of tb is
+
+    component spi_ADC2
+        -- ports
+        port( 
+            -- Inputs
+            i_clk        : in std_logic;
+            i_reset      : in std_logic;
+            i_start      : in std_logic;
+            i_config     : in std_logic;
+            i_miso       : in std_logic;
+
+            -- Outputs
+            o_busy       : out std_logic;
+            o_r_data0    : out std_logic_vector(13 downto 0);
+            o_r_data1    : out std_logic_vector(13 downto 0);
+            o_r_data2    : out std_logic_vector(13 downto 0);
+            o_r_data3    : out std_logic_vector(13 downto 0);
+            o_r_data4    : out std_logic_vector(13 downto 0);
+            o_r_data5    : out std_logic_vector(13 downto 0);
+            o_r_data6    : out std_logic_vector(13 downto 0);
+            o_r_data7    : out std_logic_vector(13 downto 0);
+            o_cnv        : out std_logic;
+            o_sck        : out std_logic;
+            o_mosi       : out std_logic
+            
+            -- Inouts
+
+        );
+    end component;
+
+
+        signal i_clk        : std_logic;
+        signal i_reset      : std_logic;
+        signal i_start      : std_logic;
+        signal i_config     : std_logic;
+        signal i_miso       : std_logic;
+                              
+                              
+        signal o_busy       :  std_logic;
+        signal o_r_data0    :  std_logic_vector(13 downto 0);
+        signal o_r_data1    :  std_logic_vector(13 downto 0);
+        signal o_r_data2    :  std_logic_vector(13 downto 0);
+        signal o_r_data3    :  std_logic_vector(13 downto 0);
+        signal o_r_data4    :  std_logic_vector(13 downto 0);
+        signal o_r_data5    :  std_logic_vector(13 downto 0);
+        signal o_r_data6    :  std_logic_vector(13 downto 0);
+        signal o_r_data7    :  std_logic_vector(13 downto 0);
+        signal o_cnv        : std_logic;
+        signal o_sck        : std_logic;
+        signal o_mosi       : std_logic;
+
+
+constant c_clkperiod        :      time := 41.6666667 ns;
+
+constant c_baud115200       :      time := 8.68 us;
+
+constant c_spi              :      time := 166 ns;
+
+constant c_hexAAAB       : std_logic_vector (13 downto 0) :=  "11011001001110";
+
+begin
+
+    DUT : spi_ADC2
+        -- port map
+        port map( 
+            i_clk        => i_clk        ,
+            i_reset      => i_reset      ,
+            i_start      => i_start      ,
+            i_config     => i_config     ,
+            i_miso       => i_miso       ,
+
+
+            o_busy       => o_busy       ,
+            o_r_data0    => o_r_data0    ,
+            o_r_data1    => o_r_data1    ,
+            o_r_data2    => o_r_data2    ,
+            o_r_data3    => o_r_data3    ,
+            o_r_data4    => o_r_data4    ,
+            o_r_data5    => o_r_data5    ,
+            o_r_data6    => o_r_data6    ,
+            o_r_data7    => o_r_data7    ,
+            o_cnv        => o_cnv        ,
+            o_sck        => o_sck        ,
+            o_mosi       => o_mosi       
+
+
+
+
+    
+        );
+
+
+P_CLKGEN   : process 
+ begin
+
+i_clk <= '0';
+wait for c_clkperiod/2;
+i_clk <= '1';
+wait for c_clkperiod/2;
+
+end process;
+
+P_STIMULI   : process
+ begin
+i_reset <='0';
+
+i_miso     <= '0';
+
+i_config   <= '0';
+i_start <= '0';
+
+wait for  1000ns;
+
+i_config   <= '1';
+
+wait for 7.1 us;
+
+i_start <= '1';
+
+wait for 80ns;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 3ns;
+
+i_start <= '0';
+
+
+
+
+
+
+
+wait for 7.1 us;
+
+i_start <= '1';
+
+wait for 80ns;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+
+wait for 3ns;
+
+i_start <= '0';
+
+wait for 0.1 ms;
+
+i_reset <= '1';
+
+wait for 1us;
+
+i_reset <= '0';
+
+i_miso     <= '0';
+
+i_config   <= '0';
+i_start <= '0';
+
+wait for  1000ns;
+
+i_config   <= '1';
+
+wait for 7.1 us;
+
+i_start <= '1';
+
+wait for 80ns;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 3ns;
+
+i_start <= '0';
+
+
+
+
+
+
+
+wait for 7.1 us;
+
+i_start <= '1';
+
+wait for 80ns;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+wait for 1.75us;
+
+for i in 13 downto 0 loop
+  i_miso <= c_hexAAAB(i); 
+wait for c_spi;
+end loop;
+
+wait for 3ns;
+assert false
+report "SIM DONE"
+severity failure;
+end process P_STIMULI;
+
+
+
+
+end behavioral;
+
