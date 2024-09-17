@@ -1,0 +1,341 @@
+-- The only difference in this testbench is the SDA_enable signal. This signal chooses between giving SDA as 
+-- input or pulling it to high-Z and taking it as output. This can be understood by looking at the values ​​of this signal given below.
+
+
+library ieee;
+use ieee.std_logic_1164.all;
+
+entity tb is
+end tb;
+
+architecture behavioral of tb is
+
+    constant c_clkperiod : time := 41.6667 ns; -- 24MHZ
+    constant c_data_period : time := 1.292 us; -- BU PERIOD DEGISEBILIR
+
+    constant c_hexAB       : std_logic_vector (7 downto 0) :=  "10101011";
+    constant c_hexD0       : std_logic_vector (7 downto 0) :=  "11010000";
+    constant c_hexA1       : std_logic_vector (7 downto 0) :=  "10100001";
+    constant c_hex18       : std_logic_vector (7 downto 0) :=  "00011000";
+    constant c_hex48       : std_logic_vector (7 downto 0) :=  "01001000";
+    constant c_hex47       : std_logic_vector (7 downto 0) :=  "01000111";
+    
+
+    signal i_clk_24MHz  : std_logic := '1';
+    signal i_reset      : std_logic := '0';
+    signal i_enable     : std_logic;
+    signal i_addr       : std_logic_vector (6 downto 0);
+    signal i_rw         : std_logic;
+    signal i_data_write : std_logic_vector (7 downto 0);
+    signal o_data_read  : std_logic_vector (7 downto 0);
+    signal o_busy       : std_logic;
+    signal o_SCL        : std_logic;
+    signal io_SDA       : std_logic;
+    signal b_io_SDA     : std_logic;
+    signal o_TEST1      : std_logic_vector (7 downto 0);
+    signal o_TEST2      : std_logic_vector (7 downto 0);
+    signal o_TEST3      : std_logic;
+    signal o_ack_error  : std_logic;
+    signal SDA_enable   : std_logic := '0';
+
+    component I2C
+        -- ports
+        port( 
+            -- Inputs
+            i_clk_24MHz     : in std_logic;
+            i_reset         : in std_logic;
+            i_enable        : in std_logic;
+            i_addr          : in std_logic_vector(6 downto 0);
+            i_rw            : in std_logic;
+            i_data_write    : in std_logic_vector(7 downto 0);
+
+            -- Outputs
+            o_data_read     : out std_logic_vector(7 downto 0);
+            o_busy          : out std_logic;
+            o_SCL           : out std_logic;
+            o_ack_error     : out std_logic;   
+
+            -- Inouts
+            io_SDA          : inout std_logic;
+
+            o_TEST1      : OUT std_logic_vector (7 downto 0);
+            o_TEST2      : OUT std_logic_vector (7 downto 0);
+            o_TEST3      : OUT std_logic
+     );
+    end component;
+
+begin
+    DUT : I2C 
+    port map( 
+
+        i_clk_24MHz     => i_clk_24MHz ,
+        i_reset         => i_reset     ,
+        i_enable        => i_enable    ,
+        i_addr          => i_addr      ,
+        i_rw            => i_rw        ,
+        i_data_write    => i_data_write,
+        o_data_read     => o_data_read ,
+        o_busy          => o_busy      , 
+        o_SCL           => o_SCL       ,
+        o_ack_error     => o_ack_error ,
+        io_SDA          => io_SDA      ,
+        o_TEST1         => o_TEST1     ,
+        o_TEST2         => o_TEST2     ,
+        o_TEST3         => o_TEST3    
+
+        );
+
+io_SDA <= b_io_SDA when (SDA_enable = '1') else 'Z';
+
+P_CLKGEN   : process  -- 24MHz CLOCK GENERATOR
+ begin
+i_clk_24MHz <= '0';
+wait for c_clkperiod/2;
+i_clk_24MHz <= '1';
+wait for c_clkperiod/2;
+end process;
+
+
+P_STIMULI :  process   -- STIMULI
+begin
+SDA_enable <= '0'; 
+i_enable <= '0';
+i_rw <= '0';
+i_data_write <= (others => '0');
+i_addr <= (others => '0');
+
+wait for 20us;
+
+---------------------- TEST 1: WRITES 2 TIMES AND STOPS DUE TO "enable" BEING '0' --------------
+i_enable <= '1';
+i_rw <= '0';
+i_data_write <= "10110101";
+i_addr <= "1010111";
+wait for 2us;
+i_enable <= '0';
+wait for 8.97us;
+SDA_enable <= '1';
+b_io_SDA <= '0';
+wait for 1us;
+SDA_enable <= '0';
+wait for 10.63us;
+SDA_enable <= '1';
+wait for 1us;
+SDA_enable <= '0'; 
+wait for 15us;
+
+
+i_enable <= '1';
+i_rw <= '0';
+i_data_write <= "10101010";
+i_addr <= "1010101";
+wait for 2us;
+i_enable <= '0';
+wait for 9.13us;
+SDA_enable <= '1';
+b_io_SDA <= '0';
+wait for 1us;
+SDA_enable <= '0';
+wait for 10.63us;
+SDA_enable <= '1';
+wait for 0.8us;
+SDA_enable <= '0'; 
+wait for 50us;
+
+--------------------  TEST 2: WRITES 3 TIMES ON THE SAME ADDRESS ----------------------
+-- 1. data
+i_enable <= '1';
+i_rw <= '0';
+i_data_write <= x"D0";
+i_addr <= "1010111";
+wait for 11.3us;
+SDA_enable <= '1';
+b_io_SDA <= '0';
+wait for 0.7us;
+SDA_enable <= '0';
+wait for 11.3us;
+i_data_write <= x"A1";
+SDA_enable <= '1';
+wait for 0.7us;
+SDA_enable <= '0';
+
+-- 2. data
+
+wait for 10.77us;
+SDA_enable <= '1';
+b_io_SDA <= '0';
+wait for 0.7us;
+SDA_enable <= '0';
+wait for 11us;
+i_data_write <= x"10";
+SDA_enable <= '1';
+wait for 0.7us;
+SDA_enable <= '0';
+
+-- 3. data 
+
+wait for 10.85us;
+i_enable <= '0';
+SDA_enable <= '1';
+b_io_SDA <= '0';
+wait for 0.7us;
+SDA_enable <= '0';
+wait for 11us;
+SDA_enable <= '1';
+wait for 0.7us;
+SDA_enable <= '0';
+wait for 50us;
+
+
+----------------------- TEST 3: WRITES ON DIFFERENT ADDRESSES CONTINUOUSLY -----------------
+-- 1. adres
+i_enable <= '1';
+i_rw <= '0';
+i_data_write <= x"D0";
+i_addr <= "1010111";
+wait for 12.52us;
+SDA_enable <= '1';
+b_io_SDA <= '0';
+wait for 0.7us;
+SDA_enable <= '0';
+wait for 10.92us;
+SDA_enable <= '1';
+wait for 0.7us;
+SDA_enable <= '0';
+
+-- 2. adres
+i_addr <= "1100110";
+i_data_write <= x"A1";
+wait for 12.2us;
+i_enable <= '0';
+SDA_enable <= '1';
+b_io_SDA <= '0';
+wait for 0.7us;
+SDA_enable <= '0';
+wait for 10.92us;
+SDA_enable <= '1';
+wait for 0.7us;
+SDA_enable <= '0';
+wait for 50us;
+
+----------------------- TEST 4: READS ONLY ONCE -----------------
+i_enable <= '1';
+i_rw <= '1';
+i_addr <= "1100101";
+
+wait for 11us;
+i_enable <= '0';
+SDA_enable <= '1';
+b_io_SDA <= '0';
+wait for 1us;
+SDA_enable <= '0';
+wait for 0.6us;
+
+for i in 7 downto 0 loop
+  SDA_enable <= '1';
+  b_io_SDA <= c_hexAB(i); 
+  wait for c_data_period;
+end loop;
+SDA_enable <= '0';
+wait for 50us;
+
+----------------------- TEST 5: READS FROM THE SAME ADDRESS REPEATEDLY -----------------
+
+
+i_enable <= '1';
+i_rw <= '1';
+i_addr <= "1010111";
+
+wait for 12us;
+-- i_enable <= '0';
+SDA_enable <= '1';
+b_io_SDA <= '0';
+wait for 1us;
+SDA_enable <= '0';
+
+for i in 7 downto 0 loop
+  SDA_enable <= '1';
+  b_io_SDA <= c_hexD0(i); 
+  wait for c_data_period;
+end loop;
+SDA_enable <= '0';
+
+wait for 1.4us;
+
+for i in 7 downto 0 loop
+  SDA_enable <= '1';
+  b_io_SDA <= c_hexA1(i); 
+  wait for c_data_period;
+end loop;
+SDA_enable <= '0';
+wait for c_data_period;
+
+for i in 7 downto 0 loop
+  SDA_enable <= '1';
+  b_io_SDA <= c_hex18(i); 
+  wait for c_data_period;
+end loop;
+SDA_enable <= '0';
+wait for c_data_period;
+
+for i in 7 downto 0 loop
+  SDA_enable <= '1';
+  b_io_SDA <= c_hex48(i); 
+  wait for c_data_period;
+end loop;
+SDA_enable <= '0';
+wait for c_data_period;
+
+for i in 7 downto 0 loop
+  SDA_enable <= '1';
+  b_io_SDA <= c_hex47(i); 
+  wait for c_data_period;
+end loop;
+SDA_enable <= '0';
+
+i_enable <= '0';
+
+wait for 50us;
+
+----------------------- TEST 6: READS FROM DIFFERENT ADDRESSES CONTINUOUSLY -----------------
+
+i_enable <= '1';
+i_rw <= '1';
+i_addr <= "1001010";
+
+wait for 12.17us;
+SDA_enable <= '1';
+b_io_SDA <= '0';
+wait for 1us;
+SDA_enable <= '0';
+wait for 0.1us;
+
+for i in 7 downto 0 loop
+  SDA_enable <= '1';
+  b_io_SDA <= c_hexD0(i); 
+  i_addr <= "1010101";
+  wait for c_data_period;
+end loop;
+SDA_enable <= '0';
+
+wait for 3us;
+
+wait for 10.15us;
+SDA_enable <= '1';
+b_io_SDA <= '0';
+wait for 1us;
+SDA_enable <= '0';
+wait for 0.1us;
+
+for i in 7 downto 0 loop
+  SDA_enable <= '1';
+  b_io_SDA <= c_hex47(i); 
+  wait for c_data_period;
+end loop;
+SDA_enable <= '0';
+i_enable <= '0';
+wait for 50us;
+
+end process P_STIMULI;
+end behavioral;
+
