@@ -1,0 +1,317 @@
+
+library ieee;
+use ieee.std_logic_1164.all;
+
+entity tb is
+end tb;
+
+architecture behavioral of tb is
+
+    constant SYSCLK_PERIOD : time := 41.6667 ns; -- 24MHZ
+  --  constant c_baud115200       :      time := 8.68 us;
+    constant c_baud115200       :      time := 3.68 us; -- 271739 baud rate'e denk geliyor??
+
+    signal  i_clk      : std_logic := '0';
+    signal  i_anahtar  : std_logic := '0';
+    signal  RXD : std_logic := '0';
+    signal  TXD : std_logic := '0';
+    signal  o_ledler   : std_logic_vector (1 downto 0) := "00";
+    signal  o_TEST     : std_logic_vector (15 downto 0) := (others => '0');
+    signal  o_TEST2     : std_logic_vector (15 downto 0) := (others => '0');
+
+    constant c_hex00        : std_logic_vector (9 downto 0) := '1' & x"00" & '0';
+    constant c_hex0A        : std_logic_vector (9 downto 0) := '1' & x"0A" & '0';
+    constant c_hex10        : std_logic_vector (9 downto 0) := '1' & x"10" & '0';
+    constant c_hex01        : std_logic_vector (9 downto 0) := '1' & x"01" & '0';
+    constant c_hexFF        : std_logic_vector (9 downto 0) := '1' & x"FF" & '0';
+    constant c_hexEE        : std_logic_vector (9 downto 0) := '1' & x"EE" & '0';
+    constant c_hexAA        : std_logic_vector (9 downto 0) := '1' & x"AA" & '0';
+    constant c_hex06       : std_logic_vector (9 downto 0) := '1' & x"06" & '0';
+    constant c_hex09       : std_logic_vector (9 downto 0) := '1' & x"09" & '0';
+    constant c_hex04       : std_logic_vector (9 downto 0) := '1' & x"04" & '0';
+    constant c_hex19       : std_logic_vector (9 downto 0) := '1' & x"19" & '0';
+    constant c_hex0C       : std_logic_vector (9 downto 0) := '1' & x"0C" & '0';
+    constant c_hex59       : std_logic_vector (9 downto 0) := '1' & x"59" & '0';
+
+
+
+
+    component TOP_MODULE
+        -- ports
+        port( 
+            -- Inputs
+            i_clk       : in std_logic;
+            i_anahtar   : in std_logic;
+            RXD         : in std_logic;
+
+
+            -- Outputs
+            o_ledler    : out std_logic_vector(1 downto 0);
+            TXD         : out std_logic;
+            o_TEST      : out std_logic_vector(15 downto 0);
+            o_TEST2     : out std_logic_vector(15 downto 0)
+            -- Inouts
+
+        );
+    end component;
+
+begin
+
+-- Instantiate Unit Under Test:  led_vhdl
+DUT : TOP_MODULE
+    -- port map
+    port map( 
+        -- Inputs
+        i_clk => i_clk,
+        i_anahtar => i_anahtar,
+        RXD => RXD,
+
+        -- Outputs
+        TXD => TXD,
+        o_ledler => o_ledler,
+        o_TEST => o_TEST,
+        o_TEST2 => o_TEST2
+        -- Inouts
+
+    );
+
+P_CLKGEN   : process 
+ begin
+
+i_clk <= '0';
+wait for SYSCLK_PERIOD/2;
+i_clk <= '1';
+wait for SYSCLK_PERIOD/2;
+
+end process;
+
+
+P_STIMULI : process 
+begin
+
+i_anahtar <= '0';
+RXD <= '1';
+
+
+wait for 10 ms;
+
+---------------yanlis veri yollama durumu-----------
+for i in 0 to 9 loop
+RXD <= c_hex0A(i); --0A
+wait for c_baud115200;
+end loop;
+
+RXD <= '1';
+wait for 2 * c_baud115200;
+
+for i in 0 to 9 loop
+RXD <= c_hex10(i); --10
+wait for c_baud115200;
+end loop;
+
+RXD <= '1';
+wait for 2 * c_baud115200;
+
+for i in 0 to 9 loop
+RXD <= c_hexFF(i); --FF
+wait for c_baud115200;
+end loop;
+
+RXD <= '1';
+wait for 10ms;
+
+--------------- durum 1 -------------------
+for i in 0 to 9 loop
+RXD <= c_hex0A(i); --0A
+wait for c_baud115200;
+end loop;
+
+RXD <= '1';
+wait for 2 * c_baud115200;
+
+for i in 0 to 9 loop
+RXD <= c_hex10(i); --10
+wait for c_baud115200;
+end loop;
+
+RXD <= '1';
+wait for 2 * c_baud115200;
+
+for i in 0 to 9 loop
+RXD <= c_hex01(i); --01
+wait for c_baud115200;
+end loop;
+
+RXD <= '1';
+wait for 2 * c_baud115200;
+
+for i in 0 to 9 loop
+RXD <= c_hexFF(i); --FF
+wait for c_baud115200;
+end loop;
+
+for i in 0 to 9 loop
+RXD <= c_hex06(i); --06
+wait for c_baud115200;
+end loop;
+
+RXD <= '1';
+wait for 2 * c_baud115200;
+
+for i in 0 to 9 loop
+RXD <= c_hex09(i); --09
+wait for c_baud115200;
+end loop;
+
+wait for 20ms;
+
+
+i_anahtar <= '0';
+RXD <= '1';
+
+
+wait for 10 ms;
+
+--------------- durum 2 -------------------
+for i in 0 to 9 loop
+RXD <= c_hex0A(i); --0A
+wait for c_baud115200;
+end loop;
+
+RXD <= '1';
+wait for 2 * c_baud115200;
+
+for i in 0 to 9 loop
+RXD <= c_hex10(i); --10
+wait for c_baud115200;
+end loop;
+
+RXD <= '1';
+wait for 2 * c_baud115200;
+
+for i in 0 to 9 loop
+RXD <= c_hex01(i); --01
+wait for c_baud115200;
+end loop;
+
+RXD <= '1';
+wait for 2 * c_baud115200;
+
+for i in 0 to 9 loop
+RXD <= c_hexEE(i); --EE
+wait for c_baud115200;
+end loop;
+
+for i in 0 to 9 loop
+RXD <= c_hex04(i); --04
+wait for c_baud115200;
+end loop;
+
+RXD <= '1';
+wait for 2 * c_baud115200;
+
+for i in 0 to 9 loop
+RXD <= c_hex19(i); --19
+wait for c_baud115200;
+end loop;
+
+wait for 20ms;
+
+------------- ANAHTAR RESET 
+i_anahtar <= '1';
+
+wait for 6ms;
+
+i_anahtar <= '0';
+RXD <= '1';
+
+
+wait for 10 ms;
+
+--------------- durum 1 -------------------
+for i in 0 to 9 loop
+RXD <= c_hex0A(i); --0A
+wait for c_baud115200;
+end loop;
+
+RXD <= '1';
+wait for 2 * c_baud115200;
+
+for i in 0 to 9 loop
+RXD <= c_hex10(i); --10
+wait for c_baud115200;
+end loop;
+
+RXD <= '1';
+wait for 2 * c_baud115200;
+
+for i in 0 to 9 loop
+RXD <= c_hex01(i); --01
+wait for c_baud115200;
+end loop;
+
+RXD <= '1';
+wait for 2 * c_baud115200;
+
+for i in 0 to 9 loop
+RXD <= c_hexFF(i); --FF
+wait for c_baud115200;
+end loop;
+
+for i in 0 to 9 loop
+RXD <= c_hex06(i); --06
+wait for c_baud115200;
+end loop;
+
+RXD <= '1';
+wait for 2 * c_baud115200;
+
+for i in 0 to 9 loop
+RXD <= c_hex09(i); --09
+wait for c_baud115200;
+end loop;
+
+wait for 20ms;
+
+
+i_anahtar <= '0';
+RXD <= '1';
+
+
+wait for 10ms;
+
+----- RESET DURUMU
+
+for i in 0 to 9 loop
+RXD <= c_hex0A(i); --0A
+wait for c_baud115200;
+end loop;
+
+RXD <= '1';
+wait for 2 * c_baud115200;
+
+for i in 0 to 9 loop
+RXD <= c_hex10(i); --10
+wait for c_baud115200;
+end loop;
+
+RXD <= '1';
+wait for 2 * c_baud115200;
+
+for i in 0 to 9 loop
+RXD <= c_hex01(i); --01
+wait for c_baud115200;
+end loop;
+
+RXD <= '1';
+wait for 2 * c_baud115200;
+
+for i in 0 to 9 loop
+RXD <= c_hex00(i); --00
+wait for c_baud115200;
+end loop;
+
+
+wait for 20ms;
+end process P_STIMULI;
+end behavioral;
