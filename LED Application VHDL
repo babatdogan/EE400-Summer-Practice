@@ -1,0 +1,527 @@
+
+-- TX out meanings:
+-- AA -> CRC ERROR
+-- BB -> 1. INPUT ERROR
+-- CC -> 2. INPUT ERROR
+-- DD -> 3. INPUT ERROR
+-- EE -> 4. INPUT ERROR
+
+library IEEE;
+
+use IEEE.std_logic_1164.all;
+
+entity led_vhdl is
+port (
+    
+    -- CLOCKLAR
+    i_clk       : IN std_logic; 			-- input clock is 24MHz 
+    i_clk_100k  : IN std_logic;				-- 100KHz clock provided by clock divider
+    i_reset     : IN std_logic;				-- asynchronous active-low reset input
+    
+    -- DIGER SINYALLER
+    i_anahtar   : IN std_logic;				-- FPGA switch for reset
+
+    o_ledler    : OUT std_logic_vector (1 downto 0);	-- LED outputs. o_ledler(0) -> LED1 , o_ledler(1) -> LED2
+    o_TEST      : OUT std_logic_vector (15 downto 0);  	-- TEST signal for debugging in Testbench 
+    o_TEST2     : OUT std_logic_vector (15 downto 0);	-- TEST signal for debugging in Testbench
+  
+    -- UART SINYALLERI
+    i_rx_ready  : IN std_logic;				-- UART output meaning receiver is done and data is ready in 8-bit
+    i_tx_ready  : IN std_logic;				-- UART output meaning transmission is done 
+    i_rx_data   : IN  std_logic_vector (7 downto 0); 	-- UART output of received data
+    o_tx_data   : OUT std_logic_vector (7 downto 0);	-- UART input for transferred data
+    o_rx_tx_select : OUT std_logic;			-- UART input for read/write select
+
+							-- These last two signal is specified for this particular UART module  
+    o_wr_l      : OUT std_logic;			-- Upon its falling edge UART starts a new write command
+    o_rd_l      : OUT std_logic				-- Upon its falling edge UART starts a new read command
+
+);
+end led_vhdl;
+
+architecture architecture_led_vhdl of led_vhdl is
+   
+    type T_STATES is (S_BASLANGIC, S_BEKLE, S_BEKLE1, S_CRC_KONTROL, S_CRC_KONTROL1, S_YANLIS_CRC, S_LED1, S_LED2, S_LED12, S_3SN_BEKLE);
+    signal ms : T_STATES := S_BASLANGIC;				-- States for main process
+    
+    type T_STATES2 is (S_BASLA, S_KONTROL, S_RESET);
+    signal ms2 : T_STATES2 := S_BASLA;					-- States for UART_RESET process
+
+    signal anahtar_reset : std_logic := '0';				-- Active-low FPGA switch reset signal
+    signal uart_reset : std_logic := '0';				-- Active-low UART reset signal
+    signal crc_hesapla   : std_logic := '0';				-- When '1' starts CRC calculation
+    signal crc_sifirla   : std_logic := '0';				-- When '1' clears the content of the CRC
+    signal reset_sayaci  : integer range 0 to 1200 := 0;		-- Counter used for FPGA switch debouncing
+    signal uart_sayaci   : integer range 0 to 10 := 0;			-- Counter used for input sequence (0x0A, 0x10... )
+    signal uart_sayaci2   : integer range 0 to 10 := 0;			-- Counter used for input sequence in UART_RESET process 
+    signal delay_sayaci  : integer range 0 to 720_000 := 0;		-- Counter used for 3 seconds delay 
+    signal rdl_counter : integer range 0 to 10 := 0;			-- Counter used for waiting after rd_l output
+    signal input_dogru  : std_logic := '0';				-- When '1' resets UART_RESET process
+    
+    signal led_secici : std_logic := '0';				-- Holds the information of LED to be ON during 3sec sequence
+    signal durum_secici : std_logic_vector (1 downto 0) := "00";	-- Holds the information of the state before checking CRC
+    signal crc_valid : std_logic_vector (1 downto 0) := "00";		-- When "11" CRC is valid
+   
+    signal crc : std_logic_vector (15 downto 0) := "0000000000000000";	-- Inner CRC calculation signal
+    signal p_crc : std_logic_vector (15 downto 0):= "0000000000000000"; -- Signal that holds the previous CRC value
+
+    signal b_ledler  : std_logic_vector (1 downto 0) := "00";		-- Buffer signal for o_ledler
+    signal b_rx_data : std_logic_vector (7 downto 0) := "00000000";	-- Buffer signal for o_rx_data
+    signal b_tx_data : std_logic_vector (7 downto 0) := "00000000";	-- Buffer signal for o_tx_data
+    signal b_rx_tx_select : std_logic := '0';				-- Buffer signal for o_rx_tx_select
+
+    signal p_rx_data : std_logic_vector (7 downto 0) := "00000000";	-- Signal for previous rx_data used to observe change in rx
+
+
+begin
+
+    -- This process is for observing if there is a FPGA switch reset. If the switch is ON, it counts up to 5ms. Switch must be ON for 5ms
+    -- for reset to take place. It is a simple counter process.
+
+    ANAHTAR_RESET_HESAPLA : process (i_clk, i_clk_100k, i_anahtar) begin
+        
+        if i_reset = '1' then
+            reset_sayaci <= 0;
+            anahtar_reset <= '0';  
+        elsif (rising_edge(i_clk_100k))then
+
+            if (i_anahtar = '1')  then
+
+                if reset_sayaci = 1200 then
+                    reset_sayaci <= 0;
+                    anahtar_reset <= '1';
+                else
+                    reset_sayaci <= reset_sayaci + 1;
+                end if;
+
+            else 
+                reset_sayaci <= 0;
+                anahtar_reset <= '0';
+            end if;
+
+        end if;
+                
+    end process ANAHTAR_RESET_HESAPLA;
+    
+
+    -- This process is for checking if there is a reset sequence coming from UART (0x0A, 0x10, 0x01, 0x00). If the sequence is received
+    -- it will create an asynchronous reset that resets all the LEDS.
+
+    UART_RESET_HESAPLA : process (i_clk, i_rx_data, i_rx_ready, uart_sayaci2) begin
+        
+        if (anahtar_reset = '1') OR (i_reset = '1') then
+
+            uart_sayaci2 <= 0;
+            uart_reset <= '0';
+            ms2 <= S_BASLA;
+
+        elsif (rising_edge(i_clk))then
+
+            p_rx_data <= i_rx_data;
+
+            case ms2 is  
+
+                when S_BASLA =>
+                   
+                    uart_sayaci2 <= 0;
+                    uart_reset <= '0';
+                    ms2 <= S_KONTROL;
+            
+                when S_KONTROL =>
+                    
+                    if input_dogru = '0' then
+                
+                        if (i_rx_data = "00001010") AND (uart_sayaci2 = 0) AND (p_rx_data /= i_rx_data) then
+                            uart_sayaci2 <= 1;
+                        end if;
+                        
+                        if (i_rx_data = "00010000") AND (uart_sayaci2 = 1) AND (p_rx_data /= i_rx_data) then
+                            uart_sayaci2 <= 2;
+                        end if;
+                        
+                        if (i_rx_data = "00000001") AND (uart_sayaci2 = 2) AND (p_rx_data /= i_rx_data) then
+                            uart_sayaci2 <= 3;
+                        end if;
+                    
+                        if (i_rx_data = "00000000") AND (uart_sayaci2 = 3) AND (p_rx_data /= i_rx_data) then
+                            uart_sayaci2 <= 0;
+                            ms2 <= S_RESET;
+                        end if;
+                        
+                        if (uart_sayaci2 = 3) AND (i_rx_ready = '1') AND (i_rx_data /= "00000000") AND (p_rx_data /= i_rx_data) then
+                            ms2 <= S_BASLA;
+                        end if;
+                    else 
+                        uart_sayaci2 <= 0;
+                        uart_reset <= '0';
+                        ms2 <= S_BASLA;
+                    end if;
+                
+                when S_RESET =>
+
+                    uart_sayaci2 <= 0;
+                    uart_reset <= '1';
+                    ms2 <= S_BASLA;
+
+                end case;
+        end if;
+                
+    end process UART_RESET_HESAPLA;
+     
+
+    -- This is the main process that checks the inputs all together and gives the led outputs. There are comments for explanation. 
+
+    MAIN_PROCESS : process (i_clk, i_clk_100k, anahtar_reset, uart_reset, i_rx_ready, uart_sayaci, i_rx_data) begin 
+
+        if (anahtar_reset = '1') OR (uart_reset = '1') OR (i_reset = '1') then 	-- The asynchronous reset is done here.
+										
+            crc_hesapla <= '0';							
+            crc_sifirla <= '1';							
+            uart_sayaci <= 0;
+            delay_sayaci <= 0;
+            o_wr_l <= '1';				-- If any reset signal is received it gives
+            o_rd_l <= '1';				-- all of the signals to their default values.
+            led_secici <= '0';
+            crc_valid <= (others => '0');
+            durum_secici <= (others => '0');
+            b_ledler <= (others => '0');
+            b_rx_data <= (others => '0');
+            b_tx_data <= (others => '0');
+            b_rx_tx_select <= '0';
+            ms <= S_BASLANGIC;  	-- It will automaticaly goes to idle state after reset.
+         
+        elsif rising_edge(i_clk) then		-- Main process works with the rising edge of 24MHz input clock
+         
+            case ms is 
+
+                when S_BASLANGIC =>		-- The first state is START state. It will give the default values to signals.
+                    				
+                    crc_hesapla <= '0';		
+                    crc_sifirla <= '1';
+                    uart_sayaci <= 0;
+                    delay_sayaci <= 0;
+                    o_wr_l <= '1';
+                    o_rd_l <= '1';
+                    led_secici <= '0';
+                    crc_valid <= (others => '0');
+                    durum_secici <= (others => '0');
+                    b_ledler <= (others => '0');
+                    b_rx_data <= (others => '0');
+                    b_tx_data <= (others => '0');
+                    b_rx_tx_select <= '0';
+                    ms <= S_BEKLE;		-- After assigning the default values it will go to the idle state.
+                        
+
+                when S_BEKLE => 		-- This is the idle state. In tihs state it waits for inputs.
+                    
+                    input_dogru <= '0';
+                    crc_sifirla <= '0';
+                    delay_sayaci <= 0 ;
+                    crc_hesapla <= '0';
+                    b_rx_data <= i_rx_data;
+                    b_tx_data <= (others => '0');
+                    durum_secici <= (others => '0');
+                    crc_valid <= (others => '0');
+                    b_rx_tx_select <= '0';
+                    o_wr_l <= '1';
+                    o_rd_l <= '1';
+
+		-- Checks if the first entry is 0x0A. If so, increments uart_sayaci and goes to S_BEKLE1 for requesting another input.
+                    if (i_rx_data = "00001010") AND (uart_sayaci = 0) AND (i_rx_ready = '1')then
+                        crc_hesapla <= '1';
+                        uart_sayaci <= 1;
+                        o_rd_l <= '0';
+                        ms <= S_BEKLE1;
+                    end if;
+
+		-- Checks if the first entry is wrong. If so, it gives output 0x"BB", resets CRC and goes back to beginning.
+                    if (i_rx_data /= "00001010") AND (uart_sayaci = 0) AND (i_rx_ready = '1') then
+                        b_tx_data <= x"BB";
+                        uart_sayaci <= 0;
+                        o_wr_l <= '0';
+                        crc_sifirla <= '1';
+                        input_dogru <= '0';
+                        ms <= S_BEKLE1;
+                    end if;
+
+		-- Checks if the second entry is 0x10. If so, increments uart_sayaci and goes to S_BEKLE1 for requesting another input.
+                    if (i_rx_data = "00010000") AND (uart_sayaci = 1) AND (i_rx_ready = '1') then
+                        crc_hesapla <= '1';
+                        uart_sayaci <= 2;
+                        o_rd_l <= '0';
+                        ms <= S_BEKLE1;
+                    end if;
+
+		-- Checks if the second entry is wrong. If so, it gives output 0x"CC", resets CRC and goes back to beginning.
+                    if (i_rx_data /= "00010000") AND (uart_sayaci = 1) AND (i_rx_ready = '1') then
+                        b_tx_data <= x"CC";
+                        uart_sayaci <= 0;
+                        o_wr_l <= '0';
+                        crc_sifirla <= '1';
+                        input_dogru <= '0';
+                        ms <= S_BEKLE1;
+                    end if;
+                
+		-- Checks if the third entry is 0x01. If so, increments uart_sayaci and goes to S_BEKLE1 for requesting another input.
+                    if (i_rx_data = "00000001") AND (uart_sayaci = 2) AND (i_rx_ready = '1') then
+                        crc_hesapla <= '1';
+                        uart_sayaci <= 3;
+                        o_rd_l <= '0';
+                        ms <= S_BEKLE1;
+                    end if;
+
+		-- Checks if the third entry is wrong. If so, it gives output 0x"DD", resets CRC and goes back to beginning.
+                    if (i_rx_data /= "00000001") AND (uart_sayaci = 2) AND (i_rx_ready = '1') then
+                        b_tx_data <= x"DD";
+                        uart_sayaci <= 0;
+                        o_wr_l <= '0';
+                        crc_sifirla <= '1';
+                        input_dogru <= '0';
+                        ms <= S_BEKLE1;
+                    end if;
+                    
+		-- Checks if the fourth entry is 0xFF. If so, increments uart_sayaci, sets LED state as LED1 and goes to crc control state.
+                    if (i_rx_data = "11111111") AND (uart_sayaci = 3) AND (i_rx_ready = '1') then
+                        crc_hesapla <= '1';
+                        durum_secici <= "01";
+                        uart_sayaci <= 4;
+                        input_dogru <= '1';
+
+                        o_rd_l <= '0';
+                        ms <= S_CRC_KONTROL1;
+                    end if;
+
+		-- Checks if the fourth entry is 0xEE. If so, increments uart_sayaci, sets LED state as LED2 and goes to crc control state.
+                    if (i_rx_data = "11101110") AND (uart_sayaci = 3) AND (i_rx_ready = '1') then 
+                        crc_hesapla <= '1';
+                        durum_secici <= "10";
+                        uart_sayaci <= 4;
+                        input_dogru <= '1';
+
+                        o_rd_l <= '0';
+                        ms <= S_CRC_KONTROL1;
+                    end if;
+
+		-- Checks if the fourth entry is 0xAA. If so, increments uart_sayaci, sets LED state as LED12 and goes to crc control state.
+                    if (i_rx_data = "10101010") AND (uart_sayaci = 3) AND (i_rx_ready = '1') then
+                        crc_hesapla <= '1';
+                        durum_secici <= "11";
+                        uart_sayaci <= 4;
+                        input_dogru <= '1';
+
+                        o_rd_l <= '0';
+                        ms <= S_CRC_KONTROL1;
+                    end if;
+
+		-- Checks if the fourth entry is wrong. If so, it gives output 0x"EE", resets CRC and goes back to beginning.
+                    if (i_rx_data /= "10101010") AND (i_rx_data /= "11101110") AND (i_rx_data /= "11111111") AND (uart_sayaci = 3) AND (i_rx_ready = '1') then
+                        uart_sayaci <= 0;
+                        crc_sifirla <= '1';
+                        b_tx_data <= x"EE";
+                        o_wr_l <= '0';
+                        input_dogru <= '0';
+                        ms <= S_BEKLE1;
+                    end if;
+                
+
+                when S_BEKLE1 =>  -- This state is used to make sure the the new input is received from UART.
+                    crc_hesapla <= '0';
+                    o_rd_l <= '0';
+
+                    if rdl_counter <= 5 then
+                        o_rd_l <= '1';
+                       rdl_counter <= 0;
+                       ms <= S_BEKLE;
+                     else 
+                       rdl_counter <= rdl_counter + 1;
+                    end if;
+
+
+                when S_CRC_KONTROL1 => -- This state is used to make sure the the new input is received from UART.
+                    crc_hesapla <= '0';
+                    o_rd_l <= '0';
+
+                    if rdl_counter <= 5 then
+                        o_rd_l <= '1';
+                       rdl_counter <= 0;
+                       ms <= S_CRC_KONTROL;
+                     else 
+                       rdl_counter <= rdl_counter + 1;
+                    end if;
+
+
+                when S_CRC_KONTROL => -- This state compares the CRC calculated to CRC comes from UART. If the CRC values match,
+				      -- it will produce crc_valid signal and continue the execution. If the CRC values do not match,
+				      -- it will abort the execution and go back to wrong crc state.
+                    crc_hesapla <= '0';
+                    b_rx_data <= i_rx_data;
+                    o_wr_l <= '1';
+                    o_rd_l <= '1';
+                    b_rx_tx_select <= '0';
+
+		    -- The last part of this state. It will check if the crc was valid. If so, it will change the state according to durum_secici signal.
+                    if (uart_sayaci = 7) then
+                        if(crc_valid = "11") then
+                            crc_valid <= "00";
+                            uart_sayaci <= 0;
+
+                            if durum_secici = "01" then
+                                ms <= S_LED1;
+                            elsif durum_secici = "10" then
+                                ms <= S_LED2;
+                            elsif durum_secici = "11" then
+                                ms <= S_LED12;
+                            end if;
+
+                        else 
+                            uart_sayaci <= 0;
+                            crc_valid <= "00";
+                            ms <= S_YANLIS_CRC;
+                        end if;
+                    end if;
+
+                    if (uart_sayaci = 6) then 
+                        uart_sayaci <= 7;
+                    end if;
+
+		    -- It compares the 6th coming byte to last byte of crc calculated.
+                    if (uart_sayaci = 5) AND (i_rx_ready = '1') then
+                        uart_sayaci <= 6;
+                        if (crc(7 downto 0) = i_rx_data) then
+                            crc_valid(1) <= '1';
+                        end if;
+
+                        o_rd_l <= '0';
+                        ms <= S_CRC_KONTROL1;
+                    end if;
+
+		    -- It compares the 5th coming byte to first byte of crc calculated.
+                    if (uart_sayaci = 4) AND (i_rx_ready = '1') then	
+                        uart_sayaci <= 5;
+                        if (crc(15 downto 8) = i_rx_data) then
+                            crc_valid(0) <= '1';
+                        end if;
+                        o_rd_l <= '0';
+                        ms <= S_CRC_KONTROL1;
+                    end if;
+
+
+                when S_YANLIS_CRC =>		-- This state tells the user the crc is invalid. It will give 0xAA output from UART.
+                    o_rd_l <= '1';
+                    o_wr_l <= '1';
+                    b_rx_tx_select <= '1';
+
+                    if i_tx_ready = '1' then 
+                        b_tx_data <= x"AA";
+                        o_wr_l <= '0';
+                        input_dogru <= '0';
+                        ms <= S_BEKLE;
+                    else
+                        ms <= S_YANLIS_CRC;
+                    end if;
+                    
+                    
+                when S_LED1 =>			-- This state turns on the first LED and goes back to the idle state.
+                    o_rd_l <= '1';
+                    o_wr_l <= '1';
+                    b_rx_tx_select <= '0';
+                    b_ledler(0) <= '1';
+                    uart_sayaci <= 0;
+                    crc_sifirla <= '1';
+                    input_dogru <= '0';
+                    ms <= S_BEKLE;
+
+
+                when S_LED2 =>			-- This state turns on the second LED and goes back to the idle state.
+                    o_rd_l <= '1';
+                    o_wr_l <= '1';
+                    b_rx_tx_select <= '0';
+                    b_ledler(1) <= '1';
+                    uart_sayaci <= 0;
+                    crc_sifirla <= '1';
+                    input_dogru <= '0';
+                    ms <= S_BEKLE;
+
+                when S_LED12 =>			-- This state starts the LED sequence. Only way to get out from LED sequence loop is to 
+						-- provide an asynchronous reset.
+                    o_rd_l <= '1';
+                    o_wr_l <= '1';
+                    b_rx_tx_select <= '0';
+                    uart_sayaci <= 0;
+                    if led_secici = '0' then
+                        b_ledler <= "01";
+                        led_secici <= '1';
+                        ms <= S_3SN_BEKLE;
+                    else 
+                        b_ledler <= "10";
+                        led_secici <= '0';
+                        ms <= S_3SN_BEKLE;
+                    end if;
+
+
+                when S_3SN_BEKLE =>		-- This state is for waiting 3 seconds. It does it by counting up.
+                        
+                    if (i_clk_100k'event) AND (i_clk_100k = '1') then
+
+                        if delay_sayaci = 720_000 then
+                            delay_sayaci <= 0;
+                            ms <= S_LED12;
+                        else
+                            delay_sayaci <= delay_sayaci + 1;
+                        end if;
+                    end if;
+                
+            end case;    
+        end if;
+    end process MAIN_PROCESS;
+
+
+    -- This process is for calculating the crc from the giving inputs.
+    CRC_HESAPLAMA : process (i_clk, i_rx_ready) begin
+
+        p_crc <= crc; 
+  
+        if (anahtar_reset = '1') OR (i_reset = '1') then -- This process also has an asynchronous reset.
+            crc <= x"0000";
+            p_crc <= x"0000";
+
+        elsif rising_edge(i_clk) then
+
+            if crc_sifirla = '1' then
+                crc <= x"0000";
+                p_crc <= x"0000";
+            end if;
+
+	-- IMPORTANT NOTE: The following code is for crc-16 xmodem function. The reference for this code can be found in reference list.
+
+            if crc_hesapla = '1' then
+                crc(0)  <=  b_rx_data(0) XOR b_rx_data(4) XOR p_crc(8) XOR p_crc(12); 
+                crc(1)  <=  b_rx_data(1) XOR b_rx_data(5) XOR p_crc(9) XOR p_crc(13); 
+                crc(2)  <=  b_rx_data(2) XOR b_rx_data(6) XOR p_crc(10) XOR p_crc(14); 
+                crc(3)  <=  b_rx_data(3) XOR b_rx_data(7) XOR p_crc(11) XOR p_crc(15); 
+                crc(4)  <=  b_rx_data(4) XOR p_crc(12); 
+                crc(5)  <=  b_rx_data(0) XOR b_rx_data(5) XOR p_crc(13) XOR  b_rx_data(4) XOR p_crc(8) XOR p_crc(12); 
+                crc(6)  <=  b_rx_data(1) XOR b_rx_data(6) XOR p_crc(14) XOR  b_rx_data(5) XOR p_crc(9) XOR p_crc(13); 
+                crc(7)  <=  b_rx_data(2) XOR b_rx_data(7) XOR p_crc(15) XOR  b_rx_data(6) XOR p_crc(10) XOR p_crc(14); 
+                crc(8)  <=  b_rx_data(3) XOR p_crc(0) XOR b_rx_data(7) XOR p_crc(11) XOR p_crc(15); 
+                crc(9)  <=  b_rx_data(4) XOR p_crc(1) XOR p_crc(12); 
+                crc(10) <=  b_rx_data(5) XOR p_crc(2) XOR p_crc(13); 
+                crc(11) <=  b_rx_data(6) XOR p_crc(3) XOR p_crc(14); 
+                crc(12) <=  b_rx_data(0) XOR b_rx_data(7) XOR p_crc(4) XOR p_crc(15) XOR  b_rx_data(4) XOR p_crc(8) XOR p_crc(12); 
+                crc(13) <=  b_rx_data(1) XOR p_crc(5) XOR b_rx_data(5) XOR p_crc(9) XOR p_crc(13); 
+                crc(14) <=  b_rx_data(2) XOR p_crc(6) XOR b_rx_data(6) XOR p_crc(10) XOR p_crc(14);
+                crc(15) <=  b_rx_data(3) XOR p_crc(7) XOR b_rx_data(7) XOR p_crc(11) XOR p_crc(15);
+           end if; 
+        end if;
+
+    end process CRC_HESAPLAMA;
+
+   -- Here the outputs are connected to their buffers sequentially.
+    o_tx_data <= b_tx_data;
+    o_ledler <= b_ledler;
+    o_rx_tx_select <= b_rx_tx_select;
+
+   -- Here the test signals are connected to signals that needs to be observed sequentially.
+    o_TEST  <= "00000000" & i_rx_data;
+    o_TEST2 <= "000000000000" & crc_valid & '0' & i_rx_ready;
+end architecture_led_vhdl;
